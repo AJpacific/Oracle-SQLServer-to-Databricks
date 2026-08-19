@@ -1,0 +1,48 @@
+{
+  "name": "JOB02_INCREMENTAL_SYNC",
+  "max_concurrent_runs": 1,
+  "tags": {
+    "project": "oracle_to_databricks_accelerator",
+    "stage": "incremental_sync"
+  },
+  "parameters": [
+    { "name": "catalog", "default": "da_accelerators" },
+    { "name": "control_schema", "default": "control" },
+    { "name": "secret_scope", "default": "oracle-migration" },
+    { "name": "src_path", "default": "" }
+  ],
+  "tasks": [
+    {
+      "task_key": "T11a_Delta_Prep",
+      "notebook_task": {
+        "notebook_path": "notebooks/NB11a_DeltaSyncPrep",
+        "base_parameters": {
+          "catalog": "{{job.parameters.catalog}}",
+          "control_schema": "{{job.parameters.control_schema}}",
+          "secret_scope": "{{job.parameters.secret_scope}}",
+          "src_path": "{{job.parameters.src_path}}"
+        }
+      }
+    },
+    {
+      "task_key": "T11b_Delta_Apply",
+      "depends_on": [ { "task_key": "T11a_Delta_Prep" } ],
+      "notebook_task": { "notebook_path": "notebooks/NB11b_DeltaSyncApply" }
+    },
+    {
+      "task_key": "T12_Delta_Reconciliation",
+      "depends_on": [ { "task_key": "T11b_Delta_Apply" } ],
+      "notebook_task": {
+        "notebook_path": "notebooks/NB12_ValidationAndReconciliation",
+        "base_parameters": { "mode": "delta" }
+      }
+    }
+  ],
+  "trigger": {
+    "pause_status": "PAUSED",
+    "periodic": { "interval": 1, "unit": "HOURS" }
+  },
+  "queue": { "enabled": true },
+  "email_notifications": { "on_failure": [] },
+  "__notes__": "Oracle incremental sync. Keep trigger PAUSED until manual delta runs are validated. NB11a passes run_id via task values; downstream tasks reuse it. Update notebook_path prefixes, compute and parameters (secret_scope=oracle-migration) before enabling the schedule."
+}

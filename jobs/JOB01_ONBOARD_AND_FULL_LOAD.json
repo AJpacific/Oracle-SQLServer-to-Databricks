@@ -1,0 +1,83 @@
+{
+  "name": "JOB01_ONBOARD_AND_FULL_LOAD",
+  "max_concurrent_runs": 1,
+  "tags": {
+    "project": "oracle_to_databricks_accelerator",
+    "stage": "onboarding_full_load"
+  },
+  "parameters": [
+    { "name": "catalog", "default": "da_accelerators" },
+    { "name": "control_schema", "default": "control" },
+    { "name": "secret_scope", "default": "oracle-migration" },
+    { "name": "src_path", "default": "" }
+  ],
+  "tasks": [
+    {
+      "task_key": "T00_Init_Control",
+      "notebook_task": {
+        "notebook_path": "notebooks/NB00_ControlTableInit",
+        "base_parameters": {
+          "catalog": "{{job.parameters.catalog}}",
+          "control_schema": "{{job.parameters.control_schema}}",
+          "secret_scope": "{{job.parameters.secret_scope}}",
+          "src_path": "{{job.parameters.src_path}}",
+          "seed_poc_rows": "true"
+        }
+      }
+    },
+    {
+      "task_key": "T01_Source_Inventory",
+      "depends_on": [ { "task_key": "T00_Init_Control" } ],
+      "notebook_task": { "notebook_path": "notebooks/NB01_SourceInventory" }
+    },
+    {
+      "task_key": "T02_Type_Normalization",
+      "depends_on": [ { "task_key": "T01_Source_Inventory" } ],
+      "notebook_task": { "notebook_path": "notebooks/NB02_TypeNormalization" }
+    },
+    {
+      "task_key": "T03_Mapping_Rules",
+      "depends_on": [ { "task_key": "T02_Type_Normalization" } ],
+      "notebook_task": { "notebook_path": "notebooks/NB03_MappingRulesGeneration" }
+    },
+    {
+      "task_key": "T04_Mapping_Validation",
+      "depends_on": [ { "task_key": "T03_Mapping_Rules" } ],
+      "notebook_task": { "notebook_path": "notebooks/NB04_MappingValidation" }
+    },
+    {
+      "task_key": "T07_Table_Decision",
+      "depends_on": [ { "task_key": "T04_Mapping_Validation" } ],
+      "notebook_task": { "notebook_path": "notebooks/NB07_TableDecisionGeneration" }
+    },
+    {
+      "task_key": "T08_Target_Provisioning",
+      "depends_on": [ { "task_key": "T07_Table_Decision" } ],
+      "notebook_task": { "notebook_path": "notebooks/NB08_TargetProvisioning" }
+    },
+    {
+      "task_key": "T09_Full_Load",
+      "depends_on": [ { "task_key": "T08_Target_Provisioning" } ],
+      "notebook_task": {
+        "notebook_path": "notebooks/NB09_FullLoad",
+        "base_parameters": { "write_mode": "overwrite" }
+      }
+    },
+    {
+      "task_key": "T12_Reconciliation",
+      "depends_on": [ { "task_key": "T09_Full_Load" } ],
+      "notebook_task": {
+        "notebook_path": "notebooks/NB12_ValidationAndReconciliation",
+        "base_parameters": { "mode": "full" }
+      }
+    },
+    {
+      "task_key": "T10_Commit_Full_Load_State",
+      "depends_on": [ { "task_key": "T12_Reconciliation" } ],
+      "notebook_task": { "notebook_path": "notebooks/NB10_PostFullLoadState" }
+    }
+  ],
+  "queue": { "enabled": true },
+  "email_notifications": { "on_failure": [] },
+  "__notes__": "Oracle onboarding + full load. Install the Oracle JDBC driver (ojdbc17) on the compute, set notebook_path prefixes to your Git-folder path, attach compute (job_clusters or existing_cluster_id), and update parameter defaults (catalog=da_accelerators, secret_scope=oracle-migration) before running. Every task inherits job parameters; base_parameters override where needed."
+}
