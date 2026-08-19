@@ -4,7 +4,9 @@
 # MAGIC Builds the Pipeline 2 workload queue for every eligible table after the
 # MAGIC initial load. WATERMARK and HYBRID use a bounded temporal extract,
 # MAGIC PRIMARY_KEY uses a complete source extract for MERGE, and FULL_LOAD uses
-# MAGIC a complete source extract for target refresh.
+# MAGIC a complete source extract for target refresh. SQL Server datetime2
+# MAGIC watermarks use the approved six-fractional-digit AUTO policy: the source
+# MAGIC MAX and incremental predicate are normalized to datetime2(6).
 
 # COMMAND ----------
 
@@ -69,10 +71,14 @@ def coerce_watermark(value, watermark_type, adapter):
     return dt.astimezone(timezone.utc)
 
 
-def capture_upper_watermark(adapter, database, schema, table, wm_col, server):
-    """Capture the source's current MAX(watermark) once; return (raw, canonical_utc)."""
+def capture_upper_watermark(adapter, database, schema, table, wm_col, wm_type, server):
+    """Capture MAX once and return (raw, canonical_utc).
+
+    For SQL Server datetime2, the adapter's query builder normalizes MAX to
+    datetime2(6) before JDBC returns the value, matching Databricks microseconds.
+    """
     rows = read_source_jdbc(
-        adapter, adapter.upper_watermark_query(database, schema, table, wm_col),
+        adapter, adapter.upper_watermark_query(database, schema, table, wm_col, wm_type),
         source_server=server, source_database=database).collect()
     raw = rows[0]["UPPER_WATERMARK"] if rows else None
     canonical = None if raw is None else sqlb.canonical_watermark_string(raw, strict=True)
@@ -114,6 +120,25 @@ for r in eligible:
     try:
         adapter = get_source_adapter_for_row(r)
 
+        # Use only the latest approved AUTO target columns. For SQL Server
+        # DATETIME2 this lets the builder project the watermark itself as
+        # datetime2(6), matching the predicate and Delta target representation.
+        approved_columns = [
+            x["column_name"]
+            for x in spark.sql(f"""
+                SELECT column_name, ordinal_position
+                FROM {ctrl('resolved_column_mappings')}
+                WHERE source_table_id = {escape_string_literal(src_id)}
+                  AND mapping_status = 'AUTO'
+                QUALIFY ROW_NUMBER() OVER (
+                    PARTITION BY column_name ORDER BY captured_ts DESC
+                ) = 1
+                ORDER BY ordinal_position
+            """).collect()
+        ]
+        if not approved_columns:
+            raise ValueError("no approved AUTO columns found for delta extraction")
+
         if strategy in ("PRIMARY_KEY", "HYBRID") and not pk:
             message = f"{strategy} strategy requires primary_key_columns"
             repo.update_control(src_id, {
@@ -126,11 +151,15 @@ for r in eligible:
         # FULL_LOAD refreshes the whole table: complete extract, no PK or
         # watermark required; the queue row carries null watermark fields.
         if strategy == "FULL_LOAD":
-            src_query = adapter.full_extract_query(src_db, s_schema, s_table)
+            src_query = adapter.full_extract_query(
+                src_db, s_schema, s_table, columns=approved_columns,
+                watermark_column=wm_col, watermark_type=wm_type)
             wm_col = wm_type = last_wm = upper_wm = None
         # PRIMARY_KEY tables have no watermark: re-extract everything and MERGE by PK.
         elif strategy == "PRIMARY_KEY":
-            src_query = adapter.full_extract_query(src_db, s_schema, s_table)
+            src_query = adapter.full_extract_query(
+                src_db, s_schema, s_table, columns=approved_columns,
+                watermark_column=wm_col, watermark_type=wm_type)
             upper_wm = None
         else:
             # WATERMARK / HYBRID uses one frozen interval per table and run.
@@ -172,7 +201,7 @@ for r in eligible:
                 continue
             # Capture the upper bound exactly once here.
             upper_raw, upper_wm = capture_upper_watermark(
-                adapter, src_db, s_schema, s_table, wm_col, src_server)
+                adapter, src_db, s_schema, s_table, wm_col, wm_type, src_server)
             if upper_raw is None:
                 repo.update_control(src_id, {
                     "current_status": "NO_SOURCE_WATERMARK",
@@ -193,7 +222,8 @@ for r in eligible:
                 skipped.append((s_schema, s_table, "NO_CHANGES"))
                 continue
             src_query = adapter.incremental_extract_query(
-                src_db, s_schema, s_table, wm_col, wm_type, last_wm, upper_wm)
+                src_db, s_schema, s_table, wm_col, wm_type,
+                last_wm, upper_wm, columns=approved_columns)
 
         queue_row = Row(
             run_id=run_id, source_table_id=src_id, source_system=src_system,

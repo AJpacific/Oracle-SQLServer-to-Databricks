@@ -1,9 +1,9 @@
 # Databricks notebook source
 # MAGIC %md
 # MAGIC # NB02_TypeNormalization
-# MAGIC Converts raw Oracle column metadata into a target-neutral standard
-# MAGIC representation and computes a per-table schema hash so unchanged schemas
-# MAGIC can be skipped later. Idempotent per run_id.
+# MAGIC Converts Oracle or SQL Server column metadata into a target-neutral
+# MAGIC representation, preserves source-specific safety flags, and computes a
+# MAGIC per-table schema hash. Idempotent per run_id.
 
 # COMMAND ----------
 
@@ -55,11 +55,15 @@ for r in rows:
     by_table.setdefault(key, []).append((
         int(r["ordinal_position"]),
         f"{r['ordinal_position']}:{r['column_name']}:{raw}:{normalized}:"
-        f"{prec}:{scale}:{length}:{nullable}"
+        f"{prec}:{scale}:{length}:{nullable}:{bool(r['is_identity'])}:"
+        f"{bool(r['is_computed'])}:{bool(r['is_hidden'])}:"
+        f"{bool(r['is_rowversion'])}:{r['source_type_schema']}"
     ))
     out.append((run_id, src_id, src_system, r["source_schema"], r["source_table"],
                 r["column_name"], int(r["ordinal_position"]), raw, normalized,
-                prec, scale, length, nullable))
+                prec, scale, length, nullable, bool(r["is_identity"]),
+                bool(r["is_computed"]), bool(r["is_hidden"]),
+                bool(r["is_rowversion"]), r["source_type_schema"]))
 
 # per-source-table schema hash (keyed by source_table_id)
 hashes = {}
@@ -97,7 +101,12 @@ if out:
         StructField("precision", IntegerType(), True),
         StructField("scale", IntegerType(), True),
         StructField("length", IntegerType(), True),
-        StructField("is_nullable", BooleanType(), True)
+        StructField("is_nullable", BooleanType(), True),
+        StructField("is_identity", BooleanType(), True),
+        StructField("is_computed", BooleanType(), True),
+        StructField("is_hidden", BooleanType(), True),
+        StructField("is_rowversion", BooleanType(), True),
+        StructField("source_type_schema", StringType(), True)
     ])
 
     df = spark.createDataFrame(

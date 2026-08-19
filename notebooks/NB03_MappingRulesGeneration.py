@@ -1,8 +1,9 @@
 # Databricks notebook source
 # MAGIC %md
 # MAGIC # NB03_MappingRulesGeneration
-# MAGIC Applies the deterministic Oracle YAML rules to every normalized column and
-# MAGIC writes resolved_column_mappings (databricks_delta_type + status + fidelity).
+# MAGIC Applies the source-specific Oracle or SQL Server rules to every normalized
+# MAGIC column and writes resolved_column_mappings. SQL Server computed columns are
+# MAGIC REVIEW and hidden columns are BLOCKED before target provisioning.
 
 # COMMAND ----------
 
@@ -50,11 +51,21 @@ for r in norm:
             length=r["length"],
             is_nullable=r["is_nullable"],
         )
+        status, fidelity, notes = res.status, res.fidelity, res.notes
+        if normalize_source_system(src_system) == "sqlserver":
+            if bool(r["is_hidden"]):
+                status, fidelity = "BLOCKED", "UNKNOWN"
+                notes = "SQL Server hidden/system-generated column is not migrated automatically"
+            elif bool(r["is_computed"]):
+                status, fidelity = "REVIEW", "UNKNOWN"
+                notes = "SQL Server computed column requires explicit approval before materialization"
         mapped.append((
             run_id, r["source_table_id"], src_system,
             r["source_schema"], r["source_table"], r["column_name"],
             int(r["ordinal_position"]), res.source_type, res.databricks_delta_type,
-            res.status, res.fidelity, res.notes, bool(r["is_nullable"]),
+            status, fidelity, notes, bool(r["is_nullable"]),
+            bool(r["is_identity"]), bool(r["is_computed"]), bool(r["is_hidden"]),
+            bool(r["is_rowversion"]), r["source_type_schema"],
         ))
     except Exception as exc:
         mapped.append((
@@ -63,7 +74,9 @@ for r in norm:
             int(r["ordinal_position"]), r["raw_type"], None,
             "BLOCKED", "UNKNOWN",
             f"Mapping failed with {type(exc).__name__}: {str(exc)[:500]}",
-            bool(r["is_nullable"]),
+            bool(r["is_nullable"]), bool(r["is_identity"]),
+            bool(r["is_computed"]), bool(r["is_hidden"]),
+            bool(r["is_rowversion"]), r["source_type_schema"],
         ))
         print(
             "BLOCKED mapping:",
@@ -100,7 +113,12 @@ if mapped:
         StructField("mapping_status", StringType(), True),
         StructField("fidelity", StringType(), True),
         StructField("notes", StringType(), True),
-        StructField("is_nullable", BooleanType(), True)
+        StructField("is_nullable", BooleanType(), True),
+        StructField("is_identity", BooleanType(), True),
+        StructField("is_computed", BooleanType(), True),
+        StructField("is_hidden", BooleanType(), True),
+        StructField("is_rowversion", BooleanType(), True),
+        StructField("source_type_schema", StringType(), True)
     ])
 
     df = (

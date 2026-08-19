@@ -64,7 +64,7 @@ for r in auto:
         # Pull the approved mapping (latest run for this source table), ordered.
         cols = spark.sql(f"""
             SELECT column_name, databricks_delta_type, mapping_status,
-                   is_nullable, ordinal_position
+                   is_nullable, ordinal_position, is_computed, is_hidden
             FROM {ctrl('resolved_column_mappings')}
             WHERE run_id = {escape_string_literal(run_id)}
               AND source_table_id = {escape_string_literal(src_id)}
@@ -77,6 +77,7 @@ for r in auto:
             for c in cols
             if (c["mapping_status"] or "").upper() != "AUTO"
             or not c["databricks_delta_type"]
+            or bool(c["is_computed"]) or bool(c["is_hidden"])
         ]
         if unsafe:
             raise Exception(

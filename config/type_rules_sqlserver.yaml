@@ -167,8 +167,8 @@ types:
   datetime2:
     databricks_delta: TIMESTAMP
     status: AUTO
-    fidelity: EXACT
-    notes: "verify fractional-seconds precision against Delta TIMESTAMP (micros)"
+    fidelity: LOSSY
+    notes: "AUTO policy: SQL Server datetime2 is normalized to microsecond precision (6 fractional digits) for Delta TIMESTAMP and watermark processing; a datetime2(7) source loses the seventh digit"
 
   datetimeoffset:
     databricks_delta: TIMESTAMP

@@ -130,15 +130,17 @@ class SqlServerSourceAdapter(SourceAdapter):
         return ssb.build_min_max_query(db, source_schema, source_table, column)
 
     def upper_watermark_query(self, source_database, source_schema, source_table,
-                              watermark_column):
+                              watermark_column, watermark_type):
         db = validate_database(source_database) if source_database else None
         return ssb.build_upper_watermark_query(
-            db, source_schema, source_table, watermark_column)
+            db, source_schema, source_table, watermark_column, watermark_type)
 
     def full_extract_query(self, source_database, source_schema, source_table,
-                           columns=None):
+                           columns=None, watermark_column=None, watermark_type=None):
         db = validate_database(source_database) if source_database else None
-        return ssb.build_full_extract_query(db, source_schema, source_table, columns)
+        return ssb.build_full_extract_query(
+            db, source_schema, source_table, columns,
+            watermark_column=watermark_column, watermark_type=watermark_type)
 
     def incremental_extract_query(self, source_database, source_schema, source_table,
                                   watermark_column, watermark_type, lower_watermark,
@@ -157,6 +159,11 @@ class SqlServerSourceAdapter(SourceAdapter):
 
     def watermark_type_rank(self, source_type):
         return ssb.watermark_type_rank(source_type)
+
+    def initial_watermark_value(self, source_type):
+        if not self.is_supported_watermark_type(source_type):
+            raise ValueError(f"Unsupported SQL Server watermark type: {source_type!r}")
+        return "1900-01-01T00:00:00.000000Z"
 
     # ------------------------------------------------------- partition policy
     def resolve_partition_plan(self, source_metadata, target_type, min_value,

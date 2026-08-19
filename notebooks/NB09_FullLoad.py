@@ -1,8 +1,8 @@
 # Databricks notebook source
 # MAGIC %md
 # MAGIC # NB09_FullLoad
-# MAGIC Reads each AUTO_MIGRATE table from Oracle over JDBC and writes it to the
-# MAGIC target Delta table (overwrite). Records source/target counts to
+# MAGIC Reads each AUTO_MIGRATE Oracle or SQL Server table through its source
+# MAGIC adapter and writes it to the target Delta table (overwrite). Records source/target counts to
 # MAGIC table_run_log. Designed to run per-table inside a ForEach Job task, or
 # MAGIC loop over all AUTO_MIGRATE tables when run standalone.
 
@@ -13,16 +13,22 @@
 # COMMAND ----------
 
 # Optional single-table parameters (used when driven by a ForEach task).
+dbutils.widgets.text("only_source_system", "")
+dbutils.widgets.text("only_source_server", "")
+dbutils.widgets.text("only_source_database", "")
 dbutils.widgets.text("only_source_schema", "")
 dbutils.widgets.text("only_source_table", "")
 dbutils.widgets.text("only_source_table_id", "")
+only_system = dbutils.widgets.get("only_source_system").strip()
+only_server = dbutils.widgets.get("only_source_server").strip()
+only_database = dbutils.widgets.get("only_source_database").strip()
 only_schema = dbutils.widgets.get("only_source_schema").strip()
 only_table = dbutils.widgets.get("only_source_table").strip()
 only_id = dbutils.widgets.get("only_source_table_id").strip()
 
 # Full-load write mode policy: overwrite is the default replacement policy.
-dbutils.widgets.dropdown("write_mode", "overwrite", ["overwrite", "append"])
-write_mode = dbutils.widgets.get("write_mode")
+# Onboarding is an idempotent snapshot replacement.
+write_mode = "overwrite"
 
 # Parallelism for the JDBC read (used only when a numeric PK bound is available).
 dbutils.widgets.text("num_partitions", "8")
@@ -44,8 +50,24 @@ def ctrl(t):
 auto = repo.active_tables(decision="AUTO_MIGRATE").collect()
 if only_id:
     auto = [r for r in auto if r["source_table_id"] == only_id]
-elif only_schema and only_table:
-    auto = [r for r in auto if r["source_schema"] == only_schema and r["source_table"] == only_table]
+elif only_schema or only_table or only_system or only_server or only_database:
+    if not (only_schema and only_table):
+        raise ValueError("Manual filtering requires both only_source_schema and only_source_table")
+    def _matches_manual_filter(r):
+        d = r.asDict()
+        if only_system and normalize_source_system(d.get("source_system") or "oracle") != normalize_source_system(only_system):
+            return False
+        if only_server and (d.get("source_server") or "").lower() != only_server.lower():
+            return False
+        if only_database and (d.get("source_database") or "").lower() != only_database.lower():
+            return False
+        return r["source_schema"] == only_schema and r["source_table"] == only_table
+    auto = [r for r in auto if _matches_manual_filter(r)]
+    if len(auto) > 1:
+        raise ValueError(
+            "Ambiguous manual source filter. Use only_source_table_id or add "
+            "only_source_system, only_source_server, and only_source_database."
+        )
 print("Tables to full-load:", len(auto))
 
 # COMMAND ----------
@@ -148,7 +170,11 @@ for r in auto:
                 if part_reason is None:
                     part_col = pk_col
 
-        extract = adapter.full_extract_query(src_db, s_schema, s_table)
+        extract_columns = [m["column_name"] for m in mrows]
+        extract = adapter.full_extract_query(
+            src_db, s_schema, s_table, columns=extract_columns,
+            watermark_column=d.get("watermark_column"),
+            watermark_type=d.get("watermark_data_type"))
         if part_col:
             src_df = read_source_jdbc(
                 adapter, extract, source_server=src_server, source_database=src_db,

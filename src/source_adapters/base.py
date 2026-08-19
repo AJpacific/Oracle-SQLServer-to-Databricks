@@ -127,12 +127,12 @@ class SourceAdapter(ABC):
 
     @abstractmethod
     def upper_watermark_query(self, source_database, source_schema, source_table,
-                              watermark_column):
+                              watermark_column, watermark_type):
         ...
 
     @abstractmethod
     def full_extract_query(self, source_database, source_schema, source_table,
-                           columns=None):
+                           columns=None, watermark_column=None, watermark_type=None):
         ...
 
     @abstractmethod
@@ -152,6 +152,11 @@ class SourceAdapter(ABC):
 
     @abstractmethod
     def watermark_type_rank(self, source_type):
+        ...
+
+    @abstractmethod
+    def initial_watermark_value(self, source_type):
+        """Canonical checkpoint used when a successfully loaded source is empty."""
         ...
 
     def resolve_watermark_decision(self, columns, primary_key_columns,

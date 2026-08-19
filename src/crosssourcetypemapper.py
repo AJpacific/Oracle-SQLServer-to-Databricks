@@ -1,11 +1,9 @@
 """
-crosssourcetypemapper.py - deterministic Oracle -> Databricks (Delta) type mapping.
+crosssourcetypemapper.py - deterministic Oracle/SQL Server -> Databricks mapping.
 
-The mapper is the single source of truth for how an Oracle column type becomes a
-Databricks Delta type. It is driven by config/type_rules.yaml but contains the
-special Oracle NUMBER(p,s) resolution logic that a flat table cannot express,
-because in Oracle almost every numeric column is reported as data_type='NUMBER'
-with the real shape held in precision/scale.
+The mapper selects source-specific rules by dialect. Oracle retains its special
+NUMBER(p,s) resolution, while SQL Server decimal/numeric uses independent
+precision/scale logic and timestamp/rowversion remain binary.
 
 Statuses:  AUTO | REVIEW | BLOCKED
 Fidelity:  EXACT | WIDENED | LOSSY | UNKNOWN
@@ -183,8 +181,9 @@ _SQLSERVER_BUILTIN_RULES = {
                        "SQL Server datetime (~3.33ms resolution) widened to Delta TIMESTAMP"),
     "smalldatetime":  ("TIMESTAMP", "AUTO", "WIDENED",
                        "SQL Server smalldatetime (minute resolution) widened to Delta TIMESTAMP"),
-    "datetime2":      ("TIMESTAMP", "AUTO", "EXACT",
-                       "verify fractional-seconds precision against Delta TIMESTAMP (micros)"),
+    "datetime2":      ("TIMESTAMP", "AUTO", "LOSSY",
+                       "AUTO policy: normalized to microsecond precision (6 fractional digits); "
+                       "a datetime2(7) source loses the seventh digit"),
     "datetimeoffset": ("TIMESTAMP", "REVIEW", "LOSSY",
                        "timezone offset dropped when converted to Delta TIMESTAMP; confirm policy"),
     "time":           ("STRING", "REVIEW", "LOSSY",

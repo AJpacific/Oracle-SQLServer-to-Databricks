@@ -1,10 +1,10 @@
 # Databricks notebook source
 # MAGIC %md
 # MAGIC # NB01_SourceInventory
-# MAGIC Reads Oracle metadata (columns, primary keys) directly over JDBC from the
-# MAGIC data dictionary (ALL_TAB_COLUMNS / ALL_CONS_COLUMNS) for every active
-# MAGIC table in source_table_control, detects the load strategy, and writes
-# MAGIC source_inventory plus strategy/PK/watermark back to control.
+# MAGIC Reads source-specific metadata and primary keys through the adapter for
+# MAGIC every active Oracle or SQL Server table, detects the load strategy, and
+# MAGIC writes source_inventory plus strategy/PK/watermark back to control.
+# MAGIC SQL Server computed columns require review and hidden columns are blocked.
 
 # COMMAND ----------
 
@@ -85,14 +85,23 @@ for r in active:
         # ---- build column dicts for strategy detection ----
         col_dicts = []
         for c in cols:
-            col_dicts.append({
-                "column_name": c["COLUMN_NAME"],
-                "data_type": c["DATA_TYPE"],
-                "scale": c["NUMERIC_SCALE"],
-                "ordinal_position": int(c["ORDINAL_POSITION"]),
-                "datetime_precision": (int(c["DATETIME_PRECISION"])
-                                       if c["DATETIME_PRECISION"] is not None else None),
-            })
+            cd = c.asDict(recursive=True)
+            is_identity = bool(cd.get("IS_IDENTITY") or 0)
+            is_computed = bool(cd.get("IS_COMPUTED") or 0)
+            is_hidden = bool(cd.get("IS_HIDDEN") or 0)
+            is_rowversion = bool(cd.get("IS_ROWVERSION") or 0)
+            source_type_schema = cd.get("SOURCE_TYPE_SCHEMA")
+            # Hidden and computed columns are never considered for automatic
+            # watermark selection. Their explicit mapping policy is applied in NB03.
+            if not is_hidden and not is_computed:
+                col_dicts.append({
+                    "column_name": c["COLUMN_NAME"],
+                    "data_type": c["DATA_TYPE"],
+                    "scale": c["NUMERIC_SCALE"],
+                    "ordinal_position": int(c["ORDINAL_POSITION"]),
+                    "datetime_precision": (int(c["DATETIME_PRECISION"])
+                                           if c["DATETIME_PRECISION"] is not None else None),
+                })
             inventory_rows.append((
                 run_id, src_id, src_system, src_server, src_db,
                 src_schema, src_table, c["COLUMN_NAME"],
@@ -101,6 +110,7 @@ for r in active:
                 (int(c["NUMERIC_PRECISION"]) if c["NUMERIC_PRECISION"] is not None else None),
                 (int(c["NUMERIC_SCALE"]) if c["NUMERIC_SCALE"] is not None else None),
                 (int(c["DATETIME_PRECISION"]) if c["DATETIME_PRECISION"] is not None else None),
+                is_identity, is_computed, is_hidden, is_rowversion, source_type_schema,
             ))
 
         # Validate any previously stored watermark first, otherwise rank all
@@ -160,7 +170,12 @@ inventory_schema = StructType([
     StructField("character_maximum_length", IntegerType(), True),
     StructField("numeric_precision", IntegerType(), True),
     StructField("numeric_scale", IntegerType(), True),
-    StructField("datetime_precision", IntegerType(), True)
+    StructField("datetime_precision", IntegerType(), True),
+    StructField("is_identity", BooleanType(), True),
+    StructField("is_computed", BooleanType(), True),
+    StructField("is_hidden", BooleanType(), True),
+    StructField("is_rowversion", BooleanType(), True),
+    StructField("source_type_schema", StringType(), True)
 ])
 
 inv_df = spark.createDataFrame(

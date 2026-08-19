@@ -2,8 +2,9 @@
 # MAGIC %md
 # MAGIC # NB10_PostFullLoadState
 # MAGIC Commits bootstrap state AFTER a successful, validated full load. Sets
-# MAGIC initial_load_completed=true and captures the initial watermark for
-# MAGIC WATERMARK/HYBRID tables so incremental sync can start cleanly.
+# MAGIC initial_load_completed=true and seeds the initial watermark from the exact
+# MAGIC Delta snapshot written by NB09. This prevents rows arriving at the source
+# MAGIC after the full-load read from being skipped during the handoff to Pipeline 2.
 
 # COMMAND ----------
 
@@ -59,6 +60,9 @@ for r in loaded:
         if strategy in ("WATERMARK", "HYBRID"):
             if not wm_col:
                 raise ValueError("watermark strategy has no watermark column")
+            # Seed from the target snapshot that NB09 actually loaded. A live
+            # source MAX here creates a race: a row inserted after NB09 reads but
+            # before NB10 runs could advance the checkpoint without being loaded.
             t_catalog = r["target_catalog"] or CATALOG
             t_schema = r["target_schema"] or s_schema.lower()
             t_table = r["target_table"] or s_table.lower()
@@ -67,8 +71,10 @@ for r in loaded:
                    .agg(F.max(F.col(f"`{wm_col}`")).alias("mx"))
                    .collect()[0]["mx"])
             if val is None:
-                raise ValueError("loaded target has no non-null watermark value")
-            new_wm = sqlb.canonical_watermark_string(val, strict=True)
+                adapter = get_source_adapter_for_row(r)
+                new_wm = adapter.initial_watermark_value(r["watermark_data_type"])
+            else:
+                new_wm = sqlb.canonical_watermark_string(val, strict=True)
 
         repo.update_control(src_id, {
             "initial_load_completed": True,

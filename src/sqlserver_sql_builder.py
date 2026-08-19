@@ -89,8 +89,8 @@ def columns_metadata_query(database: str, owner: str, table: str) -> str:
       COLUMN_NAME, ORDINAL_POSITION, IS_NULLABLE, DATA_TYPE,
       CHARACTER_MAXIMUM_LENGTH, NUMERIC_PRECISION, NUMERIC_SCALE,
       DATETIME_PRECISION
-    plus neutral SQL Server extras (IS_IDENTITY, IS_COMPUTED, IS_ROWVERSION,
-    SOURCE_TYPE_SCHEMA). CHARACTER_MAXIMUM_LENGTH is expressed in characters for
+    plus neutral SQL Server extras (IS_IDENTITY, IS_COMPUTED, IS_HIDDEN,
+    IS_ROWVERSION, SOURCE_TYPE_SCHEMA). CHARACTER_MAXIMUM_LENGTH is expressed in characters for
     n[var]char (max_length is bytes there); the SQL Server ``-1`` MAX sentinel is
     preserved so MAX types can be identified downstream.
     """
@@ -119,6 +119,7 @@ def columns_metadata_query(database: str, owner: str, table: str) -> str:
                  THEN c.scale END                         AS DATETIME_PRECISION,
             CAST(c.is_identity AS INT)                    AS IS_IDENTITY,
             CAST(c.is_computed AS INT)                    AS IS_COMPUTED,
+            CAST(c.is_hidden AS INT)                      AS IS_HIDDEN,
             CASE WHEN ty.name IN ('timestamp','rowversion') THEN 1 ELSE 0 END
                                                           AS IS_ROWVERSION,
             tsch.name                                     AS SOURCE_TYPE_SCHEMA
@@ -179,11 +180,15 @@ def build_count_query(database: str, owner: str, table: str) -> str:
 
 
 def build_upper_watermark_query(database: str, owner: str, table: str,
-                                watermark_col: str) -> str:
-    """Return the current MAX(watermark) as UPPER_WATERMARK (captured once)."""
-    return (f"(SELECT MAX({quote_sqlserver(watermark_col)}) AS UPPER_WATERMARK "
+                                watermark_col: str, watermark_family: str) -> str:
+    """Return a datatype-aware frozen upper watermark."""
+    wm = quote_sqlserver(watermark_col)
+    fam = normalize_watermark_type(watermark_family)
+    if fam not in SQLSERVER_WATERMARK_CANDIDATE_TYPES:
+        raise ValueError(f"Unsupported non-temporal watermark type: {watermark_family!r}")
+    wm_expr = f"CAST({wm} AS datetime2(6))" if fam == "DATETIME2" else wm
+    return (f"(SELECT MAX({wm_expr}) AS UPPER_WATERMARK "
             f"FROM {sqlserver_fqn(owner, table, database)}) q")
-
 
 def build_min_max_query(database: str, owner: str, table: str, column: str) -> str:
     """MIN/MAX of a column, used to compute JDBC read partition bounds."""
@@ -228,21 +233,33 @@ def _format_watermark_literal(value, family: str) -> str:
         return f"CAST('{body}' AS datetime)"
     if fam == "DATETIME2":
         body = dt.strftime("%Y-%m-%d %H:%M:%S.%f")
-        return f"CAST('{body}' AS datetime2)"
+        return f"CAST('{body}' AS datetime2(6))"
     # DATETIMEOFFSET: preserve the absolute instant with an explicit UTC offset.
     body = dt.strftime("%Y-%m-%dT%H:%M:%S.%f") + "+00:00"
     return f"CAST('{body}' AS datetimeoffset)"
 
 
 def build_full_extract_query(database: str, owner: str, table: str,
-                             columns: List[str] = None) -> str:
-    """SELECT the whole table (optionally an explicit column list) for a full load."""
+                             columns: List[str] = None,
+                             watermark_column: str = None,
+                             watermark_type: str = None) -> str:
+    """SELECT a full snapshot using the incremental DATETIME2(6) projection."""
+    fam = normalize_watermark_type(watermark_type) if watermark_type else None
     if columns:
-        col_list = ", ".join(quote_sqlserver(c) for c in columns)
+        projected = []
+        for c in columns:
+            qc = quote_sqlserver(c)
+            if (fam == "DATETIME2" and watermark_column and
+                    c.strip().lower() == watermark_column.strip().lower()):
+                projected.append(f"CAST({qc} AS datetime2(6)) AS {qc}")
+            else:
+                projected.append(qc)
+        col_list = ", ".join(projected)
     else:
+        if fam == "DATETIME2" and watermark_column:
+            raise ValueError("SQL Server DATETIME2 full extraction requires an explicit approved column list")
         col_list = "*"
     return f"(SELECT {col_list} FROM {sqlserver_fqn(owner, table, database)}) q"
-
 
 def build_incremental_extract_query(database, owner, table, watermark_col,
                                     watermark_family, last_watermark_value,
@@ -259,13 +276,32 @@ def build_incremental_extract_query(database, owner, table, watermark_col,
     """
     if last_watermark_value is None or upper_watermark_value is None:
         raise ValueError("Incremental extraction requires lower and upper watermarks")
-    if columns:
-        col_list = ", ".join(quote_sqlserver(c) for c in columns)
-    else:
-        col_list = "*"
     wm = quote_sqlserver(watermark_col)
+    fam = normalize_watermark_type(watermark_family)
+    if columns:
+        projected = []
+        for c in columns:
+            qc = quote_sqlserver(c)
+            if fam == "DATETIME2" and c.strip().lower() == watermark_col.strip().lower():
+                projected.append(f"CAST({qc} AS datetime2(6)) AS {qc}")
+            else:
+                projected.append(qc)
+        col_list = ", ".join(projected)
+    else:
+        # Callers should provide the approved mapping column list for DATETIME2
+        # so the watermark can be projected at six digits without duplicate names.
+        if fam == "DATETIME2":
+            raise ValueError(
+                "SQL Server DATETIME2 incremental extraction requires an explicit "
+                "approved column list for six-digit watermark projection")
+        col_list = "*"
     lower_lit = _format_watermark_literal(last_watermark_value, watermark_family)
     upper_lit = _format_watermark_literal(upper_watermark_value, watermark_family)
-    where = f"{wm} > {lower_lit} AND {wm} <= {upper_lit}"
+    # Apply one consistent six-digit policy to both source values and bounds.
+    # This intentionally trades the seventh datetime2 digit for compatibility
+    # with Databricks TIMESTAMP and prevents a 7-digit MAX from being stored as
+    # a smaller 6-digit checkpoint that would exclude its own boundary row.
+    wm_expr = (f"CAST({wm} AS datetime2(6))" if fam == "DATETIME2" else wm)
+    where = f"{wm_expr} > {lower_lit} AND {wm_expr} <= {upper_lit}"
     return (f"(SELECT {col_list} FROM {sqlserver_fqn(owner, table, database)} "
             f"WHERE {where}) q")

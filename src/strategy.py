@@ -1,5 +1,5 @@
 """
-strategy.py - decide how each Oracle table should be loaded incrementally.
+strategy.py - decide how each Oracle or SQL Server table should be loaded.
 
 Strategies:
   FULL_LOAD     : no reliable way to detect change -> always full replace.
@@ -9,9 +9,10 @@ Strategies:
   HYBRID        : both a PK and a reliable watermark exist -> watermark fetches
                   the delta, MERGE by PK applies it (handles updates + inserts).
 
-A watermark must be a *temporal* column. Eligibility is based purely on the
-Oracle datatype: every supported temporal type (DATE / TIMESTAMP family, incl.
-WITH [LOCAL] TIME ZONE) is eligible regardless of its column name. Non-temporal
+A watermark must be a *temporal* column. Eligibility is delegated to the
+source adapter: Oracle uses DATE/TIMESTAMP families and SQL Server uses
+DATE/DATETIME/SMALLDATETIME/DATETIME2/DATETIMEOFFSET. SQL Server timestamp and
+rowversion are binary tokens and are never temporal watermarks. Non-temporal
 types (NUMBER, IDs, quantities, prices, VARCHAR2, INTERVAL, ...) are never
 eligible. Column names only influence *ranking*, never eligibility, so
 CREATED_DATE, ORDER_DATE, SNAPSHOT_DATE and custom temporal columns all remain

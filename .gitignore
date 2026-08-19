@@ -4,6 +4,4 @@ __pycache__/
 .pytest_cache/
 
 # Excluded from the published accelerator (test scaffolding + reference/demo)
-tests/
-requirements-dev.txt
 SETUP_GUIDE.md

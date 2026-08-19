@@ -1,14 +1,14 @@
 # Databricks notebook source
 # MAGIC %md
-# MAGIC # _common — shared bootstrap, imports, Oracle JDBC + logging helpers
+# MAGIC # _common - shared Oracle and SQL Server bootstrap
 # MAGIC
 # MAGIC Include this at the top of every accelerator notebook with:
 # MAGIC ```
 # MAGIC %run ./_common
 # MAGIC ```
-# MAGIC It puts the src/ package on the path, imports the pure-logic helpers,
-# MAGIC reads the Oracle connection from a Databricks **secret scope**, and
-# MAGIC exposes small helper functions used across notebooks.
+# MAGIC It puts the src/ package on the path, imports shared logic, selects the
+# MAGIC Oracle or SQL Server adapter per control-table row, reads credentials from
+# MAGIC source-specific Databricks secret scopes, and exposes shared helpers.
 
 # COMMAND ----------
 

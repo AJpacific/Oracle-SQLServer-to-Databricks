@@ -29,7 +29,7 @@ print("run_id:", run_id)
 
 # The Unity Catalog catalog is expected to already exist; only the control schema
 # is created here, so no CREATE CATALOG privilege is required.
-spark.sql(ddl.build_create_schema(CATALOG, CONTROL_SCHEMA, "Oracle accelerator control & audit"))
+spark.sql(ddl.build_create_schema(CATALOG, CONTROL_SCHEMA, "Oracle and SQL Server accelerator control & audit"))
 print("Control schema ready.")
 
 # COMMAND ----------
@@ -78,7 +78,9 @@ CREATE TABLE IF NOT EXISTS {ctrl('source_inventory')} (
   source_schema STRING, source_table STRING, column_name STRING,
   ordinal_position INT, is_nullable STRING, data_type STRING,
   character_maximum_length INT, numeric_precision INT, numeric_scale INT,
-  datetime_precision INT, captured_ts TIMESTAMP
+  datetime_precision INT, is_identity BOOLEAN, is_computed BOOLEAN,
+  is_hidden BOOLEAN, is_rowversion BOOLEAN, source_type_schema STRING,
+  captured_ts TIMESTAMP
 ) USING DELTA
 """)
 
@@ -88,6 +90,8 @@ CREATE TABLE IF NOT EXISTS {ctrl('normalized_source_inventory')} (
   source_schema STRING, source_table STRING, column_name STRING,
   ordinal_position INT, raw_type STRING, normalized_type STRING,
   precision INT, scale INT, length INT, is_nullable BOOLEAN,
+  is_identity BOOLEAN, is_computed BOOLEAN, is_hidden BOOLEAN,
+  is_rowversion BOOLEAN, source_type_schema STRING,
   schema_hash STRING, captured_ts TIMESTAMP
 ) USING DELTA
 """)
@@ -98,6 +102,8 @@ CREATE TABLE IF NOT EXISTS {ctrl('resolved_column_mappings')} (
   source_schema STRING, source_table STRING, column_name STRING,
   ordinal_position INT, source_type STRING, databricks_delta_type STRING,
   mapping_status STRING, fidelity STRING, notes STRING, is_nullable BOOLEAN,
+  is_identity BOOLEAN, is_computed BOOLEAN, is_hidden BOOLEAN,
+  is_rowversion BOOLEAN, source_type_schema STRING,
   captured_ts TIMESTAMP
 ) USING DELTA
 """)
@@ -200,9 +206,21 @@ _SOURCE_ID_FULL = [
     ("source_table_id", "STRING"), ("source_system", "STRING"),
     ("source_server", "STRING"), ("source_database", "STRING"),
 ]
-_ensure_columns("source_inventory", _SOURCE_ID_FULL)
-_ensure_columns("normalized_source_inventory", _SOURCE_ID_ONLY)
-_ensure_columns("resolved_column_mappings", _SOURCE_ID_ONLY)
+_ensure_columns("source_inventory", _SOURCE_ID_FULL + [
+    ("is_identity", "BOOLEAN"), ("is_computed", "BOOLEAN"),
+    ("is_hidden", "BOOLEAN"), ("is_rowversion", "BOOLEAN"),
+    ("source_type_schema", "STRING"),
+])
+_ensure_columns("normalized_source_inventory", _SOURCE_ID_ONLY + [
+    ("is_identity", "BOOLEAN"), ("is_computed", "BOOLEAN"),
+    ("is_hidden", "BOOLEAN"), ("is_rowversion", "BOOLEAN"),
+    ("source_type_schema", "STRING"),
+])
+_ensure_columns("resolved_column_mappings", _SOURCE_ID_ONLY + [
+    ("is_identity", "BOOLEAN"), ("is_computed", "BOOLEAN"),
+    ("is_hidden", "BOOLEAN"), ("is_rowversion", "BOOLEAN"),
+    ("source_type_schema", "STRING"),
+])
 _ensure_columns("mapping_validation_results", _SOURCE_ID_ONLY)
 _ensure_columns("table_load_decisions", _SOURCE_ID_ONLY)
 _ensure_columns("review_queue", _SOURCE_ID_ONLY)

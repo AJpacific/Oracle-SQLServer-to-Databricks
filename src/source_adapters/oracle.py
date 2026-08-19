@@ -74,12 +74,12 @@ class OracleSourceAdapter(SourceAdapter):
         return sqlb.build_min_max_query(source_schema, source_table, column)
 
     def upper_watermark_query(self, source_database, source_schema, source_table,
-                              watermark_column):
+                              watermark_column, watermark_type):
         return sqlb.build_upper_watermark_query(
             source_schema, source_table, watermark_column)
 
     def full_extract_query(self, source_database, source_schema, source_table,
-                           columns=None):
+                           columns=None, watermark_column=None, watermark_type=None):
         return sqlb.build_full_extract_query(source_schema, source_table, columns)
 
     def incremental_extract_query(self, source_database, source_schema, source_table,
@@ -98,6 +98,11 @@ class OracleSourceAdapter(SourceAdapter):
 
     def watermark_type_rank(self, source_type):
         return strat.oracle_watermark_type_rank(source_type)
+
+    def initial_watermark_value(self, source_type):
+        if not self.is_supported_watermark_type(source_type):
+            raise ValueError(f"Unsupported Oracle watermark type: {source_type!r}")
+        return "1900-01-01T00:00:00.000000Z"
 
     # ------------------------------------------------------- partition policy
     def resolve_partition_plan(self, source_metadata, target_type, min_value,

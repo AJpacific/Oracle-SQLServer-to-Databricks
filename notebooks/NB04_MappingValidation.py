@@ -40,6 +40,13 @@ for r in maps:
     def _add(severity, rule, message):
         results.append((run_id, src_id, src_system, schema, table, col,
                         severity, rule, message))
+    # Source-column safety policy is explicit and source-qualified.
+    if bool(r["is_hidden"]):
+        _add("ERROR", "SQLSERVER_HIDDEN_COLUMN",
+             "SQL Server hidden/system-generated column is blocked from automatic migration")
+    elif bool(r["is_computed"]):
+        _add("WARNING", "SQLSERVER_COMPUTED_COLUMN",
+             "SQL Server computed column requires explicit review before materialization")
 
     # Contract 1: BLOCKED columns are hard errors - they stop a table migrating.
     if status == "BLOCKED":
