@@ -59,7 +59,7 @@ _SRC_PATH = dbutils.widgets.get("src_path").strip()
 
 # --- make the src package importable ----------------------------------------
 
-repo_root = "/Workspace/Users/ashutosh.jha1@lumen.com/Oracle-to-Databricks"
+repo_root = "/Workspace/Users/ashutosh.jha1@lumen.com/Oracle-SQLServer-to-Databricks"
 
 if repo_root not in sys.path:
     sys.path.insert(0, repo_root)
