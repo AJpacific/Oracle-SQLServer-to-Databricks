@@ -1,7 +1,8 @@
+# Local test suite
+tests/
+requirements-dev.txt
+
 # Python caches
 __pycache__/
 *.py[cod]
 .pytest_cache/
-
-# Excluded from the published accelerator (test scaffolding + reference/demo)
-SETUP_GUIDE.md
