@@ -90,32 +90,47 @@ for widget_name in ("test_server", "test_database", "test_schema", "test_table")
 
 # COMMAND ----------
 
-dbutils.widgets.text("test_server", "", "SQL Server host (blank = sqlserver-host secret)")
-dbutils.widgets.text("test_database", "free-sql-db-8215349", "SQL Server database")
+dbutils.widgets.text(
+    "test_server",
+    "35.237.230.182",
+    "SQL Server host",
+)
+
+dbutils.widgets.text(
+    "test_database",
+    "BI_HealthSmart",
+    "SQL Server database",
+)
+
 dbutils.widgets.text(
     "test_schema",
-    "accelerator_demo",
-    "SQL Server schema"
+    "dbo",
+    "SQL Server schema",
 )
 
 dbutils.widgets.text(
     "test_table",
-    "Customers",
-    "SQL Server table"
+    "fullload_productcatalog",
+    "SQL Server table",
 )
 
+print("GCP SQL Server test values created.")
+
+# COMMAND ----------
+
+# Read the current GCP values from the widgets after Python restart.
 test_server = dbutils.widgets.get("test_server").strip() or None
 test_database = dbutils.widgets.get("test_database").strip()
 test_schema = dbutils.widgets.get("test_schema").strip()
 test_table = dbutils.widgets.get("test_table").strip()
 
-print("Effective SQL Server object:",
-      f"{test_database}.{test_schema}.{test_table}")
+print(
+    "Effective SQL Server object:",
+    f"{test_server}:1433/"
+    f"{test_database}.{test_schema}.{test_table}",
+)
 
-# COMMAND ----------
-
-# Build the SQL Server adapter exactly as the shared pipeline does for a
-# control-table row. Secrets are read only inside the adapter's connection code.
+# Create the SQL Server adapter.
 adapter = get_source_adapter(
     "sqlserver",
     source_server=test_server,
@@ -123,13 +138,26 @@ adapter = get_source_adapter(
     secret_provider=_secret_provider,
     secret_scope=SQLSERVER_SECRET_SCOPE,
 )
-print("Adapter:", adapter.source_system,
-      "| driver:", adapter.DRIVER,
-      "| scope:", SQLSERVER_SECRET_SCOPE)
 
-# Never print the URL itself; only its redacted form.
-_url, _props = adapter.get_jdbc_url_and_props(test_server, test_database)
-print("JDBC URL (redacted):", adapter.redact_jdbc_url(_url))
+print(
+    "Adapter:",
+    adapter.source_system,
+    "| driver:",
+    adapter.DRIVER,
+    "| scope:",
+    SQLSERVER_SECRET_SCOPE,
+)
+
+# Build and inspect only the redacted URL.
+_url, _props = adapter.get_jdbc_url_and_props(
+    test_server,
+    test_database,
+)
+
+print(
+    "JDBC URL (redacted):",
+    adapter.redact_jdbc_url(_url),
+)
 
 # COMMAND ----------
 
@@ -138,15 +166,31 @@ print("JDBC URL (redacted):", adapter.redact_jdbc_url(_url))
 # COMMAND ----------
 
 ping = read_source_jdbc(
-    adapter, "(SELECT 1 AS CONNECTION_OK) q",
-    source_server=test_server, source_database=test_database, fetchsize=1)
+    adapter,
+    "(SELECT 1 AS CONNECTION_OK) q",
+    source_server=test_server,
+    source_database=test_database,
+    fetchsize=1,
+)
 
 ping_rows = ping.collect()
-if not ping_rows or int(ping_rows[0]["CONNECTION_OK"]) != 1:
-    raise RuntimeError("SQL Server SELECT 1 returned an unexpected value.")
 
-ping.show(n=1, truncate=False)
-print("SQL Server TLS connection and authentication succeeded.")
+if (
+    not ping_rows
+    or int(ping_rows[0]["CONNECTION_OK"]) != 1
+):
+    raise RuntimeError(
+        "SQL Server SELECT 1 returned an unexpected value."
+    )
+
+ping.show(
+    n=1,
+    truncate=False,
+)
+
+print(
+    "GCP SQL Server TLS connection and authentication succeeded."
+)
 
 # COMMAND ----------
 
