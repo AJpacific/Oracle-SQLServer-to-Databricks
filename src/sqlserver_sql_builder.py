@@ -158,8 +158,8 @@ def primary_key_query(database: str, owner: str, table: str) -> str:
         JOIN {prefix}schemas sch ON tb.schema_id = sch.schema_id
         WHERE i.is_primary_key = 1
           AND ic.is_included_column = 0
+          AND ic.key_ordinal > 0
           AND sch.name = {s} AND tb.name = {t}
-        ORDER BY ic.key_ordinal
     ) q"""
     return q
 
